@@ -1,81 +1,287 @@
-name: Build Aseprite (macOS & Ubuntu)
+name: Build Aseprite Intel macOS
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: aseprite-ubuntu
-            output_archive: aseprite-ubuntu.zip
-            skia_asset: Skia-Linux-Release-x64-libstdc++.zip
-          - os: macos-latest
-            artifact_name: aseprite-macos
-            output_archive: aseprite-macos.zip
-            skia_asset: Skia-macOS-Release-x64.zip
+    name: Build Aseprite Intel
 
+    # macos-13 使用 Intel x64 runner
+    runs-on: macos-13
+    
+    timeout-minutes: 60
+    
     steps:
+
+  # ==============================
+  # Checkout
+  # ==============================
+
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        submodules: 'recursive'
-
-    # 1. 安裝系統編譯依賴
-    - name: Install dependencies (Ubuntu)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev
-
-    - name: Install dependencies (macOS)
-      if: runner.os == 'macOS'
+        submodules: recursive
+  
+  
+    # ==============================
+    # Install dependencies
+    # ==============================
+  
+    - name: Install dependencies
+      shell: bash
       run: |
         brew install cmake ninja
-
-    # 2. 自動取得 aseprite/skia 最新發佈的預編譯包
-    - name: Download Skia Asset
-      uses: dsaltares/fetch-gh-release-asset@master
-      with:
-        repo: 'aseprite/skia'
-        version: 'latest' # 自動抓取最新釋出的 Skia
-        file: ${{ matrix.skia_asset }}
-        target: 'skia.zip'
-        token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Extract Skia
+  
+  
+    # ==============================
+    # Check runner architecture
+    # ==============================
+  
+    - name: Check architecture
+      shell: bash
       run: |
-        mkdir -p $HOME/deps/skia
-        unzip -q skia.zip -d $HOME/deps/skia
-
-    # 3. 執行 CMake 配置與編譯
-    - name: Run CMake & Build
+        echo "Machine:"
+        uname -m
+  
+        echo ""
+        echo "macOS:"
+        sw_vers
+  
+        echo ""
+        echo "Compiler:"
+        clang --version
+  
+  
+    # ==============================
+    # Download Skia
+    # ==============================
+  
+    - name: Get Skia URL
+      shell: bash
       run: |
-        mkdir build
-        cd build
-        cmake -G Ninja \
+  
+        echo "Aseprite commit:"
+        git rev-parse HEAD
+  
+        echo ""
+  
+        echo "Reading Skia URL..."
+  
+        skia_url=$(source laf/misc/skia-url.sh | xargs)
+  
+        echo "SKIA_URL=$skia_url" >> $GITHUB_ENV
+  
+        echo ""
+        echo "Skia URL:"
+        echo "$skia_url"
+  
+  
+    - name: Download Skia
+      shell: bash
+      run: |
+  
+        skia_file=$(basename "$SKIA_URL")
+  
+        echo "Downloading:"
+        echo "$skia_file"
+  
+        curl \
+          -L \
+          --fail \
+          --retry 3 \
+          --retry-delay 5 \
+          -o "$skia_file" \
+          "$SKIA_URL"
+  
+        echo ""
+  
+        echo "Extracting..."
+  
+        mkdir -p skia
+  
+        unzip \
+          -q \
+          "$skia_file" \
+          -d skia
+  
+  
+    # ==============================
+    # Inspect Skia
+    # ==============================
+  
+    - name: Inspect Skia
+      shell: bash
+      run: |
+  
+        echo "==== Skia structure ===="
+  
+        find skia \
+          -maxdepth 4 \
+          -type d \
+          | sort
+  
+        echo ""
+  
+        echo "==== Skia libraries ===="
+  
+        find skia \
+          -type f \
+          | grep \
+          -E "libskia.a|skia.*a" \
+          || true
+  
+  
+    # ==============================
+    # Verify Intel Skia exists
+    # ==============================
+  
+    - name: Verify Intel Skia
+      shell: bash
+      run: |
+  
+        SKIA_LIB="skia/out/Release-x64/libskia.a"
+  
+        echo "Checking:"
+        echo "$SKIA_LIB"
+  
+        if [ ! -f "$SKIA_LIB" ]; then
+  
+          echo ""
+          echo "ERROR:"
+          echo "Intel x64 Skia not found!"
+          echo ""
+          echo "Available directories:"
+  
+          find skia/out \
+            -maxdepth 2 \
+            -type d \
+            || true
+  
+          exit 1
+  
+        fi
+  
+        echo ""
+        echo "Intel Skia found."
+  
+        file "$SKIA_LIB"
+  
+  
+    # ==============================
+    # Configure
+    # ==============================
+  
+    - name: Configure Aseprite
+      shell: bash
+      run: |
+  
+        SDK_PATH=$(xcrun \
+          --sdk macosx \
+          --show-sdk-path)
+  
+        echo "SDK:"
+        echo "$SDK_PATH"
+  
+        cmake \
+          -S . \
+          -B build \
+          -G Ninja \
+          \
           -DCMAKE_BUILD_TYPE=Release \
-          -DENABLE_GUI=ON \
+          \
+          -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+          \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+          \
+          -DCMAKE_OSX_SYSROOT="$SDK_PATH" \
+          \
+          -DENABLE_TESTS=OFF \
+          \
+          -DENABLE_SCRIPTING=ON \
+          \
           -DLAF_BACKEND=skia \
-          -DSKIA_DIR=$HOME/deps/skia \
-          -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-x64 \
-          ..
-        ninja aseprite
-
-    # 4. 打包編譯成果
-    - name: Package Artifact
+          \
+          -DSKIA_DIR="$(realpath skia)" \
+          \
+          -DSKIA_LIBRARY_DIR="$(realpath skia/out/Release-x64)"
+  
+  
+    # ==============================
+    # Build
+    # ==============================
+  
+    - name: Build Aseprite
+      shell: bash
       run: |
-        mkdir dist
-        cp -r build/bin/* dist/
-        zip -r ${{ matrix.output_archive }} dist
-
-    # 5. 上傳成品的 Zip 檔案
-    - name: Upload Build Artifact
+  
+        cmake \
+          --build build \
+          --target aseprite \
+          --parallel
+  
+  
+    # ==============================
+    # Verify result
+    # ==============================
+  
+    - name: Verify Aseprite
+      shell: bash
+      run: |
+  
+        echo "==== Build output ===="
+  
+        ls -lah build/bin
+  
+        echo ""
+  
+        echo "==== Architecture ===="
+  
+        file build/bin/aseprite
+  
+        echo ""
+  
+        echo "==== Expected ===="
+  
+        echo "Mach-O 64-bit executable x86_64"
+  
+  
+    # ==============================
+    # Package
+    # ==============================
+  
+    - name: Package
+      shell: bash
+      run: |
+  
+        rm -rf dist
+  
+        mkdir -p dist
+  
+        cp \
+          -R \
+          build/bin/* \
+          dist/
+  
+        cd dist
+  
+        zip \
+          -r \
+          ../aseprite-macos-11-intel-x64.zip \
+          .
+  
+  
+    # ==============================
+    # Upload
+    # ==============================
+  
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
+  
       with:
-        name: ${{ matrix.artifact_name }}
-        path: ${{ matrix.output_archive }}
+  
+        name: aseprite-macos-11-intel-x64
+  
+        path: aseprite-macos-11-intel-x64.zip
+  
+        if-no-files-found: error
