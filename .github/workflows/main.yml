@@ -1,3 +1,4 @@
+
 name: Build Aseprite (macOS & Ubuntu)
 
 on:
@@ -13,9 +14,13 @@ jobs:
           - os: ubuntu-latest
             artifact_name: aseprite-ubuntu
             output_archive: aseprite-ubuntu.zip
+            skia_tag: m102-861e474657
+            skia_asset: Skia-Linux-Release-x64-libstdc++.zip
           - os: macos-latest
             artifact_name: aseprite-macos
             output_archive: aseprite-macos.zip
+            skia_tag: m102-861e474657
+            skia_asset: Skia-macOS-Release-x64.zip
 
     steps:
     - name: Checkout repository
@@ -23,7 +28,7 @@ jobs:
       with:
         submodules: 'recursive'
 
-    # 1. 安裝系統依賴
+    # 1. 安裝系統編譯依賴
     - name: Install dependencies (Ubuntu)
       if: runner.os == 'Linux'
       run: |
@@ -35,18 +40,15 @@ jobs:
       run: |
         brew install cmake ninja
 
-    # 2. 下載 Skia（加上 -L 追蹤重定向）
-    - name: Download Skia (Ubuntu)
-      if: runner.os == 'Linux'
+    # 2. 使用 GitHub CLI 穩妥下載 Skia（能完美處理 GitHub 轉址問題）
+    - name: Download Skia via GitHub CLI
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102-861e474657/Skia-Linux-Release-x64-libstdc++.zip
-        mkdir -p $HOME/deps/skia
-        unzip -q skia.zip -d $HOME/deps/skia
-
-    - name: Download Skia (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102-861e474657/Skia-macOS-Release-x64.zip
+        gh release download ${{ matrix.skia_tag }} \
+          --repo aseprite/skia \
+          --pattern "${{ matrix.skia_asset }}" \
+          --output skia.zip
         mkdir -p $HOME/deps/skia
         unzip -q skia.zip -d $HOME/deps/skia
 
@@ -77,4 +79,3 @@ jobs:
       with:
         name: ${{ matrix.artifact_name }}
         path: ${{ matrix.output_archive }}
-
