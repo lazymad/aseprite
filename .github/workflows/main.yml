@@ -1,4 +1,3 @@
-
 name: Build Aseprite (macOS & Ubuntu)
 
 on:
@@ -14,12 +13,10 @@ jobs:
           - os: ubuntu-latest
             artifact_name: aseprite-ubuntu
             output_archive: aseprite-ubuntu.zip
-            skia_tag: m102-861e474657
             skia_asset: Skia-Linux-Release-x64-libstdc++.zip
           - os: macos-latest
             artifact_name: aseprite-macos
             output_archive: aseprite-macos.zip
-            skia_tag: m102-861e474657
             skia_asset: Skia-macOS-Release-x64.zip
 
     steps:
@@ -40,15 +37,18 @@ jobs:
       run: |
         brew install cmake ninja
 
-    # 2. 使用 GitHub CLI 穩妥下載 Skia（能完美處理 GitHub 轉址問題）
-    - name: Download Skia via GitHub CLI
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # 2. 自動取得 aseprite/skia 最新發佈的預編譯包
+    - name: Download Skia Asset
+      uses: dsaltares/fetch-gh-release-asset@master
+      with:
+        repo: 'aseprite/skia'
+        version: 'latest' # 自動抓取最新釋出的 Skia
+        file: ${{ matrix.skia_asset }}
+        target: 'skia.zip'
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract Skia
       run: |
-        gh release download ${{ matrix.skia_tag }} \
-          --repo aseprite/skia \
-          --pattern "${{ matrix.skia_asset }}" \
-          --output skia.zip
         mkdir -p $HOME/deps/skia
         unzip -q skia.zip -d $HOME/deps/skia
 
