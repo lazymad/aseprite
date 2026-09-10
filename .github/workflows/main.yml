@@ -1,51 +1,80 @@
-name: Build Aseprite
+name: Build Aseprite (macOS & Ubuntu)
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: aseprite-ubuntu
+            output_archive: aseprite-ubuntu.zip
+          - os: macos-latest
+            artifact_name: aseprite-macos
+            output_archive: aseprite-macos.zip
+
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: 'recursive'
 
-    - name: Setup Ninja
-      uses: llvm/actions/install-ninja@main
-
-    - name: Download Skia
+    # 1. 安裝系統依賴
+    - name: Install dependencies (Ubuntu)
+      if: runner.os == 'Linux'
       run: |
-        curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102-861e474657/Skia-Windows-Release-x64.zip
-        7z x skia.zip -o"C:/deps/skia"
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev
 
-    - name: Run CMake
+    - name: Install dependencies (macOS)
+      if: runner.os == 'macOS'
       run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        cmake -B build -G "Ninja" `
-          -DCMAKE_BUILD_TYPE=Release `
-          -DENABLE_GUI=ON `
-          -DENABLE_NEEDS_CHARSET_CONVERSION_FLAG=ON `
-          -DLAF_BACKEND=skia `
-          -DSKIA_DIR="C:/deps/skia" `
-          -DSKIA_LIBRARY_DIR="C:/deps/skia/out/Release-x64"
-      shell: cmd
+        brew install cmake ninja
 
-    - name: Build
+    # 2. 下載 Skia（加上 -L 追蹤重定向）
+    - name: Download Skia (Ubuntu)
+      if: runner.os == 'Linux'
       run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        ninja -C build aseprite
-      shell: cmd
+        curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102-861e474657/Skia-Linux-Release-x64-libstdc++.zip
+        mkdir -p $HOME/deps/skia
+        unzip -q skia.zip -d $HOME/deps/skia
 
+    - name: Download Skia (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102-861e474657/Skia-macOS-Release-x64.zip
+        mkdir -p $HOME/deps/skia
+        unzip -q skia.zip -d $HOME/deps/skia
+
+    # 3. 執行 CMake 配置與編譯
+    - name: Run CMake & Build
+      run: |
+        mkdir build
+        cd build
+        cmake -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DENABLE_GUI=ON \
+          -DLAF_BACKEND=skia \
+          -DSKIA_DIR=$HOME/deps/skia \
+          -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-x64 \
+          ..
+        ninja aseprite
+
+    # 4. 打包編譯成果
     - name: Package Artifact
       run: |
         mkdir dist
-        xcopy /E /I build\bin dist
-        powershell Compress-Archive -Path dist\* -DestinationPath aseprite-windows.zip
+        cp -r build/bin/* dist/
+        zip -r ${{ matrix.output_archive }} dist
 
+    # 5. 上傳成品的 Zip 檔案
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: aseprite-windows
-        path: aseprite-windows.zip
+        name: ${{ matrix.artifact_name }}
+        path: ${{ matrix.output_archive }}
+
